@@ -94,19 +94,19 @@ def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=OVERLAP):
 def insert_embedding(cur, article, chunk, emb):
     print(article)
     cur.execute("""
-        INSERT INTO news_embeddings
-        (article_id, title, content, topic, sentiment_label,
-         sentiment_score, source, scraped_at, embedding)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """, (
-        article["data"]["id"],
-        article["data"]["title"],
+                    INSERT INTO news_embeddings
+                    (article_id, title, content, topic, sentiment_label,
+                     sentiment_score, source, scraped_at, embedding)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+        str(article["_id"]),
+        article.get("title"),
         chunk,
-        article["data"].get("topic"),
-        article["data"]["sentiment"]["label"],
-        article["data"]["sentiment"]["score"],
-        article["data"]["source"],
-        article["data"]["scraped_at"],
+        article.get("topic"),
+        article.get("sentiment", {}).get("label"),
+        article.get("sentiment", {}).get("score"),
+        article.get("source"),
+        article.get("scraped_at"),
         list(map(float, emb))
     ))
 
@@ -162,7 +162,7 @@ try:
         # print one-liner to help debugging during iteration
         aid = article.get("data", {}).get("id") or article.get("_id")
         print("Processing article id:", aid)
-        text = article["data"].get("text") if article.get("data") else None
+        text = article.get("text") if article.get("data") else None
         if not text:
             continue
         chunks = chunk_text(text)
