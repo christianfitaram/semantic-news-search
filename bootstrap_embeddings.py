@@ -92,6 +92,7 @@ def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=OVERLAP):
 
 
 def insert_embedding(cur, article, chunk, emb):
+    print(article)
     cur.execute("""
         INSERT INTO news_embeddings
         (article_id, title, content, topic, sentiment_label,
@@ -105,7 +106,7 @@ def insert_embedding(cur, article, chunk, emb):
         article["data"]["sentiment"]["label"],
         article["data"]["sentiment"]["score"],
         article["data"]["source"],
-        article["data"]["scrapedAt"],
+        article["data"]["scraped_at"],
         list(map(float, emb))
     ))
 
@@ -171,6 +172,7 @@ try:
             for chunk, emb in zip(batch, embs):
                 if cur:
                     try:
+                        print(article)
                         insert_embedding(cur, article, chunk, emb)
                         _inserted_count += 1
                     except Exception as e:
