@@ -1,12 +1,11 @@
 # bootstrap_embeddings.py
-import os, math
+import os
 from tqdm import tqdm
-from textwrap import wrap
 from dotenv import load_dotenv
 from pymongo import MongoClient
 import psycopg2
-import numpy as np
 from sentence_transformers import SentenceTransformer
+import sys
 
 # -----------------
 # Load environment
@@ -15,13 +14,44 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 POSTGRES_URI = os.getenv("POSTGRES_URI")
 
+print("Diagnostics: MONGO_URI set:", bool(MONGO_URI))
+print("Diagnostics: POSTGRES_URI set:", bool(POSTGRES_URI))
+
+if not MONGO_URI:
+    print("Error: MONGO_URI is not set. Set it in your environment or .env file.", file=sys.stderr)
+    sys.exit(1)
+
 # -----------------
 # Connections
 # -----------------
-mongo = MongoClient(MONGO_URI)
-news_coll = mongo.news.articles  # adjust collection name if needed
-pg = psycopg2.connect(POSTGRES_URI)
-pg.autocommit = True
+try:
+    mongo = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    # force connection check
+    mongo.server_info()
+except Exception as e:
+    print("Error connecting to MongoDB:", str(e), file=sys.stderr)
+    sys.exit(1)
+
+# If your DB name or collection differs, set MONGO_DB and MONGO_COLL in env
+MONGO_DB = os.getenv("MONGO_DB", "news")
+MONGO_COLL = os.getenv("MONGO_COLL", "articles")
+
+print("Using MongoDB: {}.{}".format(MONGO_DB, MONGO_COLL))
+
+news_coll = mongo[MONGO_DB][MONGO_COLL]  # adjust collection name if needed
+
+# Postgres connection is optional for diagnostics; continue if it fails but warn
+pg = None
+try:
+    if POSTGRES_URI:
+        pg = psycopg2.connect(POSTGRES_URI)
+        pg.autocommit = True
+        print("Postgres connection: OK")
+    else:
+        print("POSTGRES_URI not set; DB writes will be skipped.")
+except Exception as e:
+    print("Warning: could not connect to Postgres:", str(e))
+    pg = None
 
 # -----------------
 # Model
@@ -71,11 +101,49 @@ def insert_embedding(cur, article, chunk, emb):
 # -----------------
 # Main loop implementation
 # -----------------
-with pg.cursor() as cur:
+
+# Get document count for tqdm total and diagnostic
+try:
+    total = news_coll.count_documents({})
+    print("Document count in collection:", total)
+except Exception as e:
+    print("Warning: could not get document count:", str(e))
+    total = None
+
+if total == 0:
+    print("No documents found in the configured Mongo collection. Check MONGO_URI, MONGO_DB, and MONGO_COLL.")
+    # show a sample of databases/collections to help debug
+    try:
+        dbs = mongo.list_database_names()
+        print("Databases:", dbs)
+        for dbn in dbs:
+            cols = mongo[dbn].list_collection_names()
+            if cols:
+                print("Sample collection: {}.{}".format(dbn, cols[0]))
+                sample = mongo[dbn][cols[0]].find_one()
+                print("Sample document:", sample)
+                break
+    except Exception as e:
+        print("Unable to list databases/collections:", str(e))
+    sys.exit(0)
+
+# If pg is None we still want to run but skip writes (or you can exit instead)
+if pg is None:
+    print("Warning: Postgres not available. Script will attempt to compute embeddings but will not persist them.")
+
+cur = None
+if pg:
+    cur = pg.cursor()
+
+try:
+    # find returns a cursor; provide total to tqdm for proper progress
     articles = news_coll.find({})
-    for article in tqdm(articles, desc="Embedding articles"):
-        print(article)
-        text = article["data"].get("text")
+    # tqdm will show accurate progress only if total is provided
+    for article in tqdm(articles, desc="Embedding articles", total=total):
+        # print one-liner to help debugging during iteration
+        aid = article.get("data", {}).get("id") or article.get("_id")
+        print("Processing article id:", aid)
+        text = article["data"].get("text") if article.get("data") else None
         if not text:
             continue
         chunks = chunk_text(text)
@@ -83,4 +151,11 @@ with pg.cursor() as cur:
             batch = chunks[i:i + BATCH_SIZE]
             embs = model.encode(batch, normalize_embeddings=True)
             for chunk, emb in zip(batch, embs):
-                insert_embedding(cur, article, chunk, emb)
+                if cur:
+                    insert_embedding(cur, article, chunk, emb)
+                else:
+                    # if no postgres, just show one example and continue
+                    print("Computed embedding for chunk (len):", len(chunk))
+finally:
+    if cur:
+        cur.close()
