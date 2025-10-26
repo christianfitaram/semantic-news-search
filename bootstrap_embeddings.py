@@ -69,7 +69,7 @@ def insert_embedding(cur, article, chunk, emb):
 
 
 # -----------------
-# Main loop
+# Main loop implementation
 # -----------------
 with pg.cursor() as cur:
     articles = news_coll.find({})
