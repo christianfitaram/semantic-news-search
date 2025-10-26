@@ -15,6 +15,12 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 POSTGRES_URI = os.getenv("POSTGRES_URI")
 
+# Prevent accidental non-persistent runs: require POSTGRES_URI unless explicitly allowed
+if not POSTGRES_URI and os.getenv("ALLOW_NO_PERSIST") != "1":
+    print("Error: POSTGRES_URI is not set. To avoid accidental non-persisted runs the script requires POSTGRES_URI.", file=sys.stderr)
+    print("If you intentionally want to run without persisting, set ALLOW_NO_PERSIST=1 in the environment and re-run.", file=sys.stderr)
+    sys.exit(1)
+
 print("Diagnostics: MONGO_URI set:", bool(MONGO_URI))
 print("Diagnostics: POSTGRES_URI set:", bool(POSTGRES_URI))
 
@@ -53,6 +59,11 @@ try:
 except Exception as e:
     print("Warning: could not connect to Postgres:", str(e))
     pg = None
+
+# If a POSTGRES_URI was provided but connection failed, exit to avoid silent non-persistence
+if POSTGRES_URI and pg is None:
+    print("Error: POSTGRES_URI is set but the script could not connect to Postgres. Exiting to avoid lost embeddings.", file=sys.stderr)
+    sys.exit(1)
 
 # -----------------
 # Model
