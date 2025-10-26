@@ -72,7 +72,7 @@ def insert_embedding(cur, article, chunk, emb):
 # Main loop
 # -----------------
 with pg.cursor() as cur:
-    articles = news_coll.find({"data.cleaned": True})
+    articles = news_coll.find({})
     for article in tqdm(articles, desc="Embedding articles"):
         text = article["data"].get("text")
         if not text:
