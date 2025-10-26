@@ -162,7 +162,7 @@ try:
         # print one-liner to help debugging during iteration
         aid = article.get("data", {}).get("id") or article.get("_id")
         print("Processing article id:", aid)
-        text = article.get("text") if article.get("data") else None
+        text = article.get("text")
         if not text:
             continue
         chunks = chunk_text(text)
