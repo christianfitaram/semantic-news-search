@@ -63,9 +63,9 @@ def search(
     cur.execute(
         """
         SELECT title, source, topic, scraped_at, content, sentiment_label, sentiment_score,
-               1 - (embedding <=> %s) AS score
+               1 - (embedding <=> %s::vector) AS score
         FROM news_embeddings
-        ORDER BY embedding <=> %s
+        ORDER BY embedding <=> %s::vector
         LIMIT %s;
         """,
         (query_emb, query_emb, k * (5 if rerank else 1)),
