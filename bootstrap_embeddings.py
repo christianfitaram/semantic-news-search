@@ -6,6 +6,7 @@ from pymongo import MongoClient
 import psycopg2
 from sentence_transformers import SentenceTransformer
 import sys
+import traceback
 
 # -----------------
 # Load environment
@@ -163,7 +164,16 @@ try:
                         _inserted_count += 1
                     except Exception as e:
                         _failed_inserts += 1
-                        print("Insert error for article {}: {}".format(aid, e))
+                        print("Insert error for article {}: {}".format(aid, e), file=sys.stderr)
+                        # print full traceback for debugging
+                        traceback.print_exc()
+                        # show a small preview of the failing payload
+                        try:
+                            preview = (chunk[:120] + '...') if len(chunk) > 120 else chunk
+                        except Exception:
+                            preview = '<unable to get chunk preview>'
+                        print('Payload preview (len):', len(chunk) if isinstance(chunk, str) else 'N/A', file=sys.stderr)
+                        print('Chunk preview:', preview, file=sys.stderr)
                 else:
                     # if no postgres, just show one example and continue
                     print("Computed embedding for chunk (len):", len(chunk))
@@ -176,4 +186,3 @@ print("Embedding run summary:")
 print("  Articles processed:", _processed_articles)
 print("  Embedding chunks inserted:", _inserted_count)
 print("  Failed inserts:", _failed_inserts)
-
