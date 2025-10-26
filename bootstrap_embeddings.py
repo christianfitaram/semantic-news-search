@@ -135,11 +135,17 @@ cur = None
 if pg:
     cur = pg.cursor()
 
+# Add counters for diagnostics
+_inserted_count = 0
+_failed_inserts = 0
+_processed_articles = 0
+
 try:
     # find returns a cursor; provide total to tqdm for proper progress
     articles = news_coll.find({})
     # tqdm will show accurate progress only if total is provided
     for article in tqdm(articles, desc="Embedding articles", total=total):
+        _processed_articles += 1
         # print one-liner to help debugging during iteration
         aid = article.get("data", {}).get("id") or article.get("_id")
         print("Processing article id:", aid)
@@ -152,10 +158,22 @@ try:
             embs = model.encode(batch, normalize_embeddings=True)
             for chunk, emb in zip(batch, embs):
                 if cur:
-                    insert_embedding(cur, article, chunk, emb)
+                    try:
+                        insert_embedding(cur, article, chunk, emb)
+                        _inserted_count += 1
+                    except Exception as e:
+                        _failed_inserts += 1
+                        print("Insert error for article {}: {}".format(aid, e))
                 else:
                     # if no postgres, just show one example and continue
                     print("Computed embedding for chunk (len):", len(chunk))
 finally:
     if cur:
         cur.close()
+
+# Print final summary
+print("Embedding run summary:")
+print("  Articles processed:", _processed_articles)
+print("  Embedding chunks inserted:", _inserted_count)
+print("  Failed inserts:", _failed_inserts)
+
