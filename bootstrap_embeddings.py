@@ -33,7 +33,7 @@ except Exception as e:
     sys.exit(1)
 
 # If your DB name or collection differs, set MONGO_DB and MONGO_COLL in env
-MONGO_DB = os.getenv("MONGO_DB", "news")
+MONGO_DB = os.getenv("MONGO_DB", "agents")
 MONGO_COLL = os.getenv("MONGO_COLL", "articles")
 
 print("Using MongoDB: {}.{}".format(MONGO_DB, MONGO_COLL))
