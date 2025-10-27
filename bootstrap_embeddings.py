@@ -39,7 +39,6 @@ except Exception as e:
     print("Error connecting to MongoDB:", str(e), file=sys.stderr)
     sys.exit(1)
 
-# If your DB name or collection differs, set MONGO_DB and MONGO_COLL in env
 MONGO_DB = os.getenv("MONGO_DB", "agents")
 MONGO_COLL = os.getenv("MONGO_COLL", "articles")
 

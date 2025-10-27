@@ -1,8 +1,10 @@
 # retrieval_api.py
 import os, time
-from typing import List, Optional
-from fastapi import FastAPI, Query
-from pydantic import BaseModel
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sentence_transformers import SentenceTransformer, CrossEncoder
 import psycopg2
 from dotenv import load_dotenv
@@ -15,6 +17,10 @@ load_dotenv()
 POSTGRES_URI = os.getenv("POSTGRES_URI")
 EMBED_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 RERANK_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
+
+CHUNK_SIZE = int(os.getenv("EMBED_CHUNK_SIZE", "700"))
+CHUNK_OVERLAP = int(os.getenv("EMBED_CHUNK_OVERLAP", "100"))
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "16"))
 
 # -----------------
 # Init models
@@ -34,6 +40,73 @@ pg.autocommit = True
 # FastAPI setup
 # -----------------
 app = FastAPI(title="Semantic News Search API", version="1.0")
+
+
+class SentimentPayload(BaseModel):
+    label: Optional[str] = None
+    score: Optional[float] = None
+
+
+class ArticlePayload(BaseModel):
+    """Payload expected from the news scraper webhook."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    article_id: Optional[str] = None
+    mongo_id: Optional[str] = Field(default=None, alias="_id")
+    title: Optional[str] = None
+    text: str
+    topic: Optional[str] = None
+    source: Optional[str] = None
+    scraped_at: Optional[datetime] = None
+    sentiment: Optional[SentimentPayload] = None
+    sentiment_label: Optional[str] = None
+    sentiment_score: Optional[float] = None
+    data: Optional[Dict[str, Any]] = None
+
+    def resolve_article_id(self) -> str:
+        candidates = [
+            self.article_id,
+            self.mongo_id,
+            (self.data or {}).get("id") if isinstance(self.data, dict) else None,
+            (self.data or {}).get("_id") if isinstance(self.data, dict) else None,
+        ]
+        for cand in candidates:
+            if cand:
+                return str(cand)
+        return ""
+
+    def resolve_sentiment(self) -> SentimentPayload:
+        if self.sentiment:
+            label = self.sentiment.label or self.sentiment_label
+            score = (
+                float(self.sentiment.score)
+                if self.sentiment.score is not None
+                else self.sentiment_score
+            )
+        else:
+            label = self.sentiment_label
+            score = self.sentiment_score
+        return SentimentPayload(label=label, score=score)
+
+    def resolve_topic(self) -> Optional[str]:
+        if self.topic:
+            return self.topic
+        if isinstance(self.data, dict):
+            return self.data.get("topic")
+        return None
+
+    def resolve_source(self) -> Optional[str]:
+        if self.source:
+            return self.source
+        if isinstance(self.data, dict):
+            return self.data.get("source")
+        return None
+
+
+class WebhookResponse(BaseModel):
+    article_id: str
+    chunks_inserted: int
 
 
 class SearchResult(BaseModel):
@@ -101,3 +174,79 @@ def search(
 
     print(f"Query '{q}' processed in {time.time()-t0:.2f}s")
     return results
+
+
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
+    words = text.split()
+    if not words:
+        return []
+
+    chunks: List[str] = []
+    step = max(1, chunk_size - overlap)
+    for start_idx in range(0, len(words), step):
+        chunk = " ".join(words[start_idx : start_idx + chunk_size])
+        if len(chunk.strip()) > 100:
+            chunks.append(chunk)
+    return chunks
+
+
+def insert_embedding(cur, article: ArticlePayload, chunk: str, embedding: np.ndarray) -> None:
+    sentiment = article.resolve_sentiment()
+    cur.execute(
+        """
+        INSERT INTO news_embeddings
+        (article_id, title, content, topic, sentiment_label,
+         sentiment_score, source, scraped_at, embedding)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (
+            article.resolve_article_id(),
+            article.title,
+            chunk,
+            article.resolve_topic(),
+            sentiment.label,
+            sentiment.score,
+            article.resolve_source(),
+            article.scraped_at,
+            np.asarray(embedding, dtype=float).tolist(),
+        ),
+    )
+
+
+@app.post("/webhook/news", response_model=WebhookResponse, status_code=201)
+def ingest_newshook(article: ArticlePayload):
+    """
+    Accept a news document from the scraper, chunk + embed its text,
+    and persist the resulting vectors into Postgres.
+    """
+
+    text = article.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Field 'text' must contain content.")
+
+    chunks = chunk_text(text)
+    if not chunks:
+        raise HTTPException(
+            status_code=400,
+            detail="Content is too short to chunk; include more text.",
+        )
+
+    inserted = 0
+    with pg.cursor() as cur:
+        for batch_start in range(0, len(chunks), EMBED_BATCH_SIZE):
+            batch = chunks[batch_start : batch_start + EMBED_BATCH_SIZE]
+            embeddings = embedder.encode(batch, normalize_embeddings=True)
+            for chunk, emb in zip(batch, embeddings):
+                try:
+                    insert_embedding(cur, article, chunk, emb)
+                    inserted += 1
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to persist embedding chunk: {exc}",
+                    )
+
+    article_id = article.resolve_article_id()
+    if not article_id:
+        article_id = "unknown"
+    return WebhookResponse(article_id=article_id, chunks_inserted=inserted)
