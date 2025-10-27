@@ -250,3 +250,31 @@ def ingest_newshook(article: ArticlePayload):
     if not article_id:
         article_id = "unknown"
     return WebhookResponse(article_id=article_id, chunks_inserted=inserted)
+
+
+# --- New endpoint: serve embeddings to Next.js backend ---
+class EmbeddingRequest(BaseModel):
+    text: str
+
+
+class EmbeddingResponse(BaseModel):
+    embedding: List[float]
+
+
+@app.post("/api/embedding", response_model=EmbeddingResponse)
+def get_embedding(req: EmbeddingRequest):
+    """Return normalized embedding vector for provided text.
+
+    This endpoint is intended for the Next.js backend to request embeddings
+    without directly loading the sentence-transformers model there.
+    """
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Field 'text' must contain content.")
+
+    try:
+        emb = embedder.encode([text], normalize_embeddings=True)[0].tolist()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {exc}")
+
+    return EmbeddingResponse(embedding=emb)
