@@ -261,7 +261,7 @@ class EmbeddingResponse(BaseModel):
     embedding: List[float]
 
 
-@app.post("/api/embedding", response_model=EmbeddingResponse)
+@app.post("/api/embeddings", response_model=EmbeddingResponse)
 def get_embedding(req: EmbeddingRequest):
     """Return normalized embedding vector for provided text.
 
