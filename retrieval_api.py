@@ -168,7 +168,6 @@ def search(
             content_preview=(r[5][:220] + "...") if r[5] else None,
             sentiment_label=r[6],
             sentiment_score=float(r[7]) if r[7] is not None else None,
-            score=float(r[8]),
         )
         for r in rows
     ]
