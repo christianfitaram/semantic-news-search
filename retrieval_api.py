@@ -58,6 +58,7 @@ class ArticlePayload(BaseModel):
     text: str
     topic: Optional[str] = None
     source: Optional[str] = None
+    url: Optional[str] = None
     scraped_at: Optional[datetime] = None
     sentiment: Optional[SentimentPayload] = None
     sentiment_label: Optional[str] = None
@@ -112,6 +113,7 @@ class WebhookResponse(BaseModel):
 class SearchResult(BaseModel):
     title: Optional[str]
     source: Optional[str]
+    url: Optional[str]
     topic: Optional[str]
     scraped_at: Optional[str]
     content_preview: Optional[str]
@@ -135,7 +137,7 @@ def search(
     cur = pg.cursor()
     cur.execute(
         """
-        SELECT title, source, topic, scraped_at, content, sentiment_label, sentiment_score,
+        SELECT title, source, url, topic, scraped_at, content, sentiment_label, sentiment_score,
                1 - (embedding <=> %s::vector) AS score
         FROM news_embeddings
         ORDER BY embedding <=> %s::vector
@@ -153,12 +155,13 @@ def search(
         dict(
             title=r[0],
             source=r[1],
-            topic=r[2],
-            scraped_at=r[3].isoformat() if r[3] else None,
-            content_preview=(r[4][:220] + "...") if r[4] else None,
-            sentiment_label=r[5],
-            sentiment_score=float(r[6]) if r[6] else None,
-            score=float(r[7]),
+            url=r[2],
+            topic=r[3],
+            scraped_at=r[4].isoformat() if r[4] else None,
+            content_preview=(r[5][:220] + "...") if r[5] else None,
+            sentiment_label=r[6],
+            sentiment_score=float(r[7]) if r[7] is not None else None,
+            score=float(r[8]),
         )
         for r in rows
     ]
@@ -195,13 +198,14 @@ def insert_embedding(cur, article: ArticlePayload, chunk: str, embedding: np.nda
     cur.execute(
         """
         INSERT INTO news_embeddings
-        (article_id, title, content, topic, sentiment_label,
+        (article_id, title, url, content, topic, sentiment_label,
          sentiment_score, source, scraped_at, embedding)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """,
         (
             article.resolve_article_id(),
             article.title,
+            article.url,
             chunk,
             article.resolve_topic(),
             sentiment.label,

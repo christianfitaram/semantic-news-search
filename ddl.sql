@@ -4,6 +4,7 @@ CREATE TABLE news_embeddings (
     id SERIAL PRIMARY KEY,
     article_id TEXT,
     title TEXT,
+    url TEXT,
     content TEXT,
     topic TEXT,
     sentiment_label TEXT,
