@@ -104,6 +104,13 @@ class ArticlePayload(BaseModel):
             return self.data.get("source")
         return None
 
+    def resolve_url(self) -> Optional[str]:
+        if self.url:
+            return self.url
+        if isinstance(self.data, dict):
+            return self.data.get("url")
+        return None
+
 
 class WebhookResponse(BaseModel):
     article_id: str
@@ -205,7 +212,7 @@ def insert_embedding(cur, article: ArticlePayload, chunk: str, embedding: np.nda
         (
             article.resolve_article_id(),
             article.title,
-            article.url,
+            article.resolve_url(),
             chunk,
             article.resolve_topic(),
             sentiment.label,
