@@ -133,8 +133,15 @@ def search(
     q: str = Query(..., description="User query text"),
     k: int = Query(10, description="Number of results to return"),
     rerank: bool = Query(True, description="Enable cross-encoder reranking"),
+    date_order: str = Query(
+        "desc",
+        description="Sort results by scraped_at; use 'asc' or 'desc' (default).",
+    ),
 ):
     t0 = time.time()
+    date_order = (date_order or "desc").lower()
+    if date_order not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="Parameter 'date_order' must be 'asc' or 'desc'.")
 
     # 1. Embed query
     query_emb = embedder.encode([q], normalize_embeddings=True)[0].tolist()
@@ -164,6 +171,7 @@ def search(
             url=r[2],
             topic=r[3],
             scraped_at=r[4].isoformat() if r[4] else None,
+            _scraped_at_dt=r[4],
             content_preview=(r[5][:220] + "...") if r[5] else None,
             sentiment_label=r[6],
             sentiment_score=float(r[7]) if r[7] is not None else None,
@@ -179,6 +187,13 @@ def search(
             r["score"] = float(s)
         results.sort(key=lambda x: x["score"], reverse=True)
         results = results[:k]
+
+    results.sort(
+        key=lambda r: r.get("_scraped_at_dt") or datetime.min,
+        reverse=date_order != "asc",
+    )
+    for r in results:
+        r.pop("_scraped_at_dt", None)
 
     print(f"Query '{q}' processed in {time.time()-t0:.2f}s")
     return results
