@@ -126,7 +126,6 @@ class SearchResult(BaseModel):
     content_preview: Optional[str]
     sentiment_label: Optional[str]
     sentiment_score: Optional[float]
-    score: float
 
 
 @app.get("/search", response_model=List[SearchResult])
