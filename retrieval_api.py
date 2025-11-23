@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from psycopg2.pool import SimpleConnectionPool
 from pydantic import BaseModel, ConfigDict, Field
 from sentence_transformers import SentenceTransformer, CrossEncoder
 import psycopg2
@@ -35,6 +36,14 @@ reranker = CrossEncoder(RERANK_MODEL)
 # -----------------
 pg = psycopg2.connect(POSTGRES_URI)
 pg.autocommit = True
+pg_pool = SimpleConnectionPool(minconn=1, maxconn=5, dsn=POSTGRES_URI)
+
+
+def get_db_conn():
+    conn = pg_pool.getconn()
+    conn.autocommit = True
+    return conn
+
 
 # -----------------
 # FastAPI setup
@@ -147,7 +156,8 @@ def search(
     query_emb = embedder.encode([q], normalize_embeddings=True)[0].tolist()
 
     # 2. Retrieve top-k candidates by cosine similarity
-    cur = pg.cursor()
+    conn = get_db_conn()
+    cur = conn.cursor()
     cur.execute(
         """
         SELECT title, source, url, topic, scraped_at, content, sentiment_label, sentiment_score,
@@ -160,6 +170,7 @@ def search(
     )
     rows = cur.fetchall()
     cur.close()
+    pg_pool.putconn(conn)
 
     if not rows:
         return []
@@ -256,7 +267,8 @@ def ingest_newshook(article: ArticlePayload):
         )
 
     inserted = 0
-    with pg.cursor() as cur:
+    conn = get_db_conn()
+    with conn.cursor() as cur:
         for batch_start in range(0, len(chunks), EMBED_BATCH_SIZE):
             batch = chunks[batch_start : batch_start + EMBED_BATCH_SIZE]
             embeddings = embedder.encode(batch, normalize_embeddings=True)
@@ -269,6 +281,7 @@ def ingest_newshook(article: ArticlePayload):
                         status_code=500,
                         detail=f"Failed to persist embedding chunk: {exc}",
                     )
+    pg_pool.putconn(conn)
 
     article_id = article.resolve_article_id()
     if not article_id:
