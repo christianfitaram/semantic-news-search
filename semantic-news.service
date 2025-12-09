@@ -1,0 +1,19 @@
+[Unit]
+Description=Semantic News Search API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=christianfita
+Group=christianfita
+WorkingDirectory=/home/christianfita/apps/semantic-news-search
+EnvironmentFile=/home/christianfita/apps/semantic-news-search/.env
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/christianfita/apps/semantic-news-search/.venv/bin/uvicorn retrieval_api:app --host 0.0.0.0 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

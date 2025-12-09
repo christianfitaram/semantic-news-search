@@ -15,6 +15,6 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd /opt/semantic-news-search
+            cd /home/christianfita/apps/semantic-news-search
             git pull
             sudo systemctl restart semantic-news.service
