@@ -1,4 +1,4 @@
-name: Deploy to semantic-news-search VM
+name: Deploy to semantic-news-search VM in production
 
 on:
   push:
