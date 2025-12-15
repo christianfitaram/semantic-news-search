@@ -90,24 +90,46 @@ def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=OVERLAP):
     return chunks
 
 
-def insert_embedding(cur, article, chunk, emb):
-    print(article)
+def resolve_article_id(article) -> str:
+    """Best-effort resolution of an article id from multiple possible fields."""
+    return str(
+        article.get("data", {}).get("id")
+        or article.get("_id")
+        or article.get("article_id")
+        or article.get("mongo_id")
+        or ""
+    )
+
+
+def load_existing_article_ids(cur) -> set:
     cur.execute("""
-                    INSERT INTO news_embeddings
-                    (article_id, title, content, topic, sentiment_label,
-                     sentiment_score, source, scraped_at, embedding)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """, (
-        str(article["_id"]),
-        article.get("title"),
-        chunk,
-        article.get("topic"),
-        article.get("sentiment", {}).get("label"),
-        article.get("sentiment", {}).get("score"),
-        article.get("source"),
-        article.get("scraped_at"),
-        list(map(float, emb))
-    ))
+        SELECT DISTINCT article_id
+        FROM news_embeddings
+        WHERE article_id IS NOT NULL AND article_id <> ''
+    """)
+    return {row[0] for row in cur.fetchall()}
+
+
+def insert_embedding(cur, article_id, article, chunk, emb):
+    cur.execute(
+        """
+        INSERT INTO news_embeddings
+        (article_id, title, content, topic, sentiment_label,
+         sentiment_score, source, scraped_at, embedding)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (
+            article_id,
+            article.get("title"),
+            chunk,
+            article.get("topic"),
+            article.get("sentiment", {}).get("label"),
+            article.get("sentiment", {}).get("score"),
+            article.get("source"),
+            article.get("scraped_at"),
+            list(map(float, emb)),
+        ),
+    )
 
 
 # -----------------
@@ -146,6 +168,10 @@ if pg is None:
 cur = None
 if pg:
     cur = pg.cursor()
+    existing_ids = load_existing_article_ids(cur)
+    print("Articles already in Postgres:", len(existing_ids))
+else:
+    existing_ids = set()
 
 # Add counters for diagnostics
 _inserted_count = 0
@@ -159,8 +185,12 @@ try:
     for article in tqdm(articles, desc="Embedding articles", total=total):
         _processed_articles += 1
         # print one-liner to help debugging during iteration
-        aid = article.get("data", {}).get("id") or article.get("_id")
-        print("Processing article id:", aid)
+        aid = resolve_article_id(article)
+        if not aid:
+            print("Skipping article without id field")
+            continue
+        if aid in existing_ids:
+            continue
         text = article.get("text")
         if not text:
             continue
@@ -171,8 +201,7 @@ try:
             for chunk, emb in zip(batch, embs):
                 if cur:
                     try:
-                        print(article)
-                        insert_embedding(cur, article, chunk, emb)
+                        insert_embedding(cur, aid, article, chunk, emb)
                         _inserted_count += 1
                     except Exception as e:
                         _failed_inserts += 1

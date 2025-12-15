@@ -1,4 +1,5 @@
 # retrieval_api.py
+import inspect
 import os, time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,18 @@ load_dotenv()
 POSTGRES_URI = os.getenv("POSTGRES_URI")
 EMBED_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 RERANK_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
+HF_LOCAL_FILES_ONLY = os.getenv("HF_LOCAL_FILES_ONLY", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+HF_LOCAL_MODELS_DIR = os.getenv("HF_LOCAL_MODELS_DIR")
+HF_MODEL_CACHE_DIR = os.getenv("HF_MODEL_CACHE_DIR")
+
+if HF_LOCAL_FILES_ONLY:
+    # Prevent accidental network calls on air-gapped hosts
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 CHUNK_SIZE = int(os.getenv("EMBED_CHUNK_SIZE", "700"))
 CHUNK_OVERLAP = int(os.getenv("EMBED_CHUNK_OVERLAP", "100"))
@@ -26,10 +39,62 @@ EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "16"))
 # -----------------
 # Init models
 # -----------------
-print(f"Loading embedding model: {EMBED_MODEL}")
-embedder = SentenceTransformer(EMBED_MODEL)
-print(f"Loading reranker model: {RERANK_MODEL}")
-reranker = CrossEncoder(RERANK_MODEL)
+def _resolve_model_path(model_name: str) -> str:
+    """
+    If HF_LOCAL_MODELS_DIR is set, try to load the model from that directory
+    (useful on air‑gapped hosts where models are pre-downloaded). Otherwise
+    return the original identifier so HF hub can fetch it when allowed.
+    """
+    if HF_LOCAL_MODELS_DIR:
+        candidate = os.path.join(HF_LOCAL_MODELS_DIR, model_name)
+        if os.path.isdir(candidate):
+            return candidate
+    return model_name
+
+
+def _load_sentence_model(model_name: str):
+    resolved = _resolve_model_path(model_name)
+    kwargs = {"cache_folder": HF_MODEL_CACHE_DIR}
+    if "local_files_only" in inspect.signature(SentenceTransformer.__init__).parameters:
+        kwargs["local_files_only"] = HF_LOCAL_FILES_ONLY
+    try:
+        return SentenceTransformer(resolved, **kwargs)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Embedding model '{resolved}' not available locally "
+            f"(local_files_only={HF_LOCAL_FILES_ONLY}). "
+            "Pre-download the model into HF cache or set HF_LOCAL_MODELS_DIR "
+            "to a directory containing the model files."
+        ) from exc
+
+
+def _load_reranker_model(model_name: str):
+    resolved = _resolve_model_path(model_name)
+    kwargs = {"cache_folder": HF_MODEL_CACHE_DIR}
+    if "local_files_only" in inspect.signature(CrossEncoder.__init__).parameters:
+        kwargs["local_files_only"] = HF_LOCAL_FILES_ONLY
+    try:
+        return CrossEncoder(resolved, **kwargs)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Reranker model '{resolved}' not available locally "
+            f"(local_files_only={HF_LOCAL_FILES_ONLY}). "
+            "Pre-download the model into HF cache or set HF_LOCAL_MODELS_DIR "
+            "to a directory containing the model files."
+        ) from exc
+
+
+print(
+    f"Loading embedding model: {EMBED_MODEL} "
+    f"(local_files_only={HF_LOCAL_FILES_ONLY}, cache_dir={HF_MODEL_CACHE_DIR})"
+)
+embedder = _load_sentence_model(EMBED_MODEL)
+
+print(
+    f"Loading reranker model: {RERANK_MODEL} "
+    f"(local_files_only={HF_LOCAL_FILES_ONLY}, cache_dir={HF_MODEL_CACHE_DIR})"
+)
+reranker = _load_reranker_model(RERANK_MODEL)
 
 # -----------------
 # Connect Postgres
@@ -135,6 +200,28 @@ class SearchResult(BaseModel):
     content_preview: Optional[str]
     sentiment_label: Optional[str]
     sentiment_score: Optional[float]
+
+
+@app.get("/health")
+def healthcheck():
+    """Lightweight health probe used by process managers."""
+    try:
+        conn = get_db_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1;")
+            cur.fetchone()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Database check failed: {exc}")
+    finally:
+        if "conn" in locals():
+            pg_pool.putconn(conn)
+
+    return {
+        "status": "ok",
+        "database": "ok",
+        "embedding_model": EMBED_MODEL,
+        "reranker_model": RERANK_MODEL,
+    }
 
 
 @app.get("/search", response_model=List[SearchResult])
