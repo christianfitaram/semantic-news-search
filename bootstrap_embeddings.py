@@ -36,7 +36,7 @@ try:
     # force connection check
     mongo.server_info()
 except Exception as e:
-    print("Error connecting to MongoDB:", str(e), file=sys.stderr)
+    print("Error connecting to MongoDB: ", str(e), file=sys.stderr)
     sys.exit(1)
 
 MONGO_DB = os.getenv("MONGO_DB", "agents")
