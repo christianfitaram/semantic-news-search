@@ -16,16 +16,26 @@ import numpy as np
 # Load environment
 # -----------------
 load_dotenv()
+
+
+def _env_flag(name: str, default: Optional[bool] = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return raw.lower() in ("1", "true", "yes", "y", "on")
+
+
 POSTGRES_URI = os.getenv("POSTGRES_URI")
 EMBED_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 RERANK_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
-HF_LOCAL_FILES_ONLY = os.getenv("HF_LOCAL_FILES_ONLY", "false").lower() in (
-    "1",
-    "true",
-    "yes",
-)
 HF_LOCAL_MODELS_DIR = os.getenv("HF_LOCAL_MODELS_DIR")
 HF_MODEL_CACHE_DIR = os.getenv("HF_MODEL_CACHE_DIR")
+
+# Derive offline flag: explicit env wins; otherwise inherit TRANSFORMERS_OFFLINE
+HF_LOCAL_FILES_ONLY = _env_flag(
+    "HF_LOCAL_FILES_ONLY",
+    default=_env_flag("TRANSFORMERS_OFFLINE", default=False),
+)
 
 if HF_LOCAL_FILES_ONLY:
     # Prevent accidental network calls on air-gapped hosts
@@ -42,13 +52,22 @@ EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "16"))
 def _resolve_model_path(model_name: str) -> str:
     """
     If HF_LOCAL_MODELS_DIR is set, try to load the model from that directory
-    (useful on air‑gapped hosts where models are pre-downloaded). Otherwise
-    return the original identifier so HF hub can fetch it when allowed.
+    (useful on air‑gapped hosts where models are pre-downloaded). We check both
+    a subdir matching the full repo id and a subdir matching the final slug.
+    Otherwise return the original identifier so HF hub can fetch it when allowed.
     """
+    # Absolute or already-local path: use as-is
+    if os.path.isdir(model_name):
+        return model_name
+
     if HF_LOCAL_MODELS_DIR:
-        candidate = os.path.join(HF_LOCAL_MODELS_DIR, model_name)
-        if os.path.isdir(candidate):
-            return candidate
+        full = os.path.join(HF_LOCAL_MODELS_DIR, model_name)
+        slug = os.path.join(
+            HF_LOCAL_MODELS_DIR, model_name.rstrip("/").split("/")[-1]
+        )
+        for candidate in (full, slug):
+            if os.path.isdir(candidate):
+                return candidate
     return model_name
 
 
@@ -64,7 +83,8 @@ def _load_sentence_model(model_name: str):
             f"Embedding model '{resolved}' not available locally "
             f"(local_files_only={HF_LOCAL_FILES_ONLY}). "
             "Pre-download the model into HF cache or set HF_LOCAL_MODELS_DIR "
-            "to a directory containing the model files."
+            f"to a directory containing '{model_name}' (or provide an absolute path "
+            "via EMBEDDING_MODEL)."
         ) from exc
 
 
@@ -80,7 +100,8 @@ def _load_reranker_model(model_name: str):
             f"Reranker model '{resolved}' not available locally "
             f"(local_files_only={HF_LOCAL_FILES_ONLY}). "
             "Pre-download the model into HF cache or set HF_LOCAL_MODELS_DIR "
-            "to a directory containing the model files."
+            f"to a directory containing '{model_name}' (or provide an absolute path "
+            "via RERANKER_MODEL)."
         ) from exc
 
 
