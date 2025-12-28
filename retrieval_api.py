@@ -154,7 +154,9 @@ async def verify_signature(
     Expected format: sha256=<hex_digest>
     """
     body = await request.body()
-    
+    print(f"Verifying signature for body: {body}")
+    print(f"Received signature: {x_signature}")
+    print(f"Using API_SECRET: {API_SECRET}")
     # Compute expected signature
     computed_signature = hmac.new(
         API_SECRET.encode(),
