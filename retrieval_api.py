@@ -1,10 +1,15 @@
 # retrieval_api.py
+import hmac
+import hashlib
 import inspect
+import json
 import os, time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from fastapi import Header, HTTPException, status, Request
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.params import Depends
 from psycopg2.pool import SimpleConnectionPool
 from pydantic import BaseModel, ConfigDict, Field
 from sentence_transformers import SentenceTransformer, CrossEncoder
@@ -17,6 +22,10 @@ import numpy as np
 # -----------------
 load_dotenv()
 
+API_SECRET = os.getenv("API_KEY", "")
+
+
+# Dependency function to verify API key
 
 def _env_flag(name: str, default: Optional[bool] = False) -> bool:
     raw = os.getenv(name)
@@ -136,6 +145,33 @@ def get_db_conn():
 # -----------------
 app = FastAPI(title="Semantic News Search API", version="1.0")
 
+async def verify_signature(
+    request: Request,
+    x_signature: str = Header(..., description="HMAC signature of request body")
+):
+    """
+    Verifies the X-Signature header using HMAC-SHA256.
+    Expected format: sha256=<hex_digest>
+    """
+    body = await request.body()
+    
+    # Compute expected signature
+    computed_signature = hmac.new(
+        API_SECRET.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+    
+    # Verify signature (constant-time comparison to prevent timing attacks)
+    expected = f"sha256={computed_signature}"
+    
+    if not hmac.compare_digest(x_signature, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid signature"
+        )
+    
+    return True
 
 class SentimentPayload(BaseModel):
     label: Optional[str] = None
@@ -224,8 +260,13 @@ class SearchResult(BaseModel):
 
 
 @app.get("/health")
-def healthcheck():
+def healthcheck(x_api_key: str = Header(..., description="API key for access")):
     """Lightweight health probe used by process managers."""
+    
+    """GET endpoints can use simple API key."""
+    if x_api_key not in {os.getenv("API_KEY")}:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    t0 = time.time()
     try:
         conn = get_db_conn()
         with conn.cursor() as cur:
@@ -250,11 +291,15 @@ def search(
     q: str = Query(..., description="User query text"),
     k: int = Query(10, description="Number of results to return"),
     rerank: bool = Query(True, description="Enable cross-encoder reranking"),
+    x_api_key: str = Header(..., description="API key for access"),
     date_order: str = Query(
         "desc",
         description="Sort results by scraped_at; use 'asc' or 'desc' (default).",
     ),
 ):
+    """GET endpoints can use simple API key."""
+    if x_api_key not in {os.getenv("API_KEY")}:
+        raise HTTPException(status_code=401, detail="Invalid API key")
     t0 = time.time()
     date_order = (date_order or "desc").lower()
     if date_order not in {"asc", "desc"}:
@@ -357,7 +402,11 @@ def insert_embedding(cur, article: ArticlePayload, chunk: str, embedding: np.nda
 
 
 @app.post("/webhook/news", response_model=WebhookResponse, status_code=201)
-def ingest_newshook(article: ArticlePayload):
+def ingest_newshook(
+    article: ArticlePayload,
+    x_signature: str = Header(...),
+    verified: bool = Depends(verify_signature)  # Add this
+):
     """
     Accept a news document from the scraper, chunk + embed its text,
     and persist the resulting vectors into Postgres.
@@ -407,7 +456,8 @@ class EmbeddingResponse(BaseModel):
 
 
 @app.post("/api/embeddings", response_model=EmbeddingResponse)
-def get_embedding(req: EmbeddingRequest):
+def get_embedding(req: EmbeddingRequest, x_signature: str = Header(...),
+    verified: bool = Depends(verify_signature)):
     """Return normalized embedding vector for provided text.
 
     This endpoint is intended for the Next.js backend to request embeddings
