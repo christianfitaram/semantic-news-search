@@ -160,7 +160,7 @@ async def verify_signature(
     # Compute expected signature
     computed_signature = hmac.new(
         API_SECRET.encode(),
-        body,
+        body.decode(),
         hashlib.sha256
     ).hexdigest()
     
