@@ -156,7 +156,6 @@ async def verify_signature(
     body = await request.body()
     print(f"Verifying signature for body: {body.decode().encode()}")
     print(f"Received signature: {x_signature}")
-    print(f"Using API_SECRET: {API_SECRET}")
     # Compute expected signature
     computed_signature = hmac.new(
         API_SECRET.encode(),
@@ -197,6 +196,7 @@ class ArticlePayload(BaseModel):
     sentiment_label: Optional[str] = None
     sentiment_score: Optional[float] = None
     data: Optional[Dict[str, Any]] = None
+    table: str = "news_embeddings"
 
     def resolve_article_id(self) -> str:
         candidates = [
@@ -379,11 +379,11 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     return chunks
 
 
-def insert_embedding(cur, article: ArticlePayload, chunk: str, embedding: np.ndarray) -> None:
+def insert_embedding(cur, article: ArticlePayload, chunk: str, embedding: np.ndarray, table: str) -> None:
     sentiment = article.resolve_sentiment()
     cur.execute(
-        """
-        INSERT INTO news_embeddings
+        f"""
+        INSERT INTO {table}
         (article_id, title, url, content, topic, sentiment_label,
          sentiment_score, source, scraped_at, embedding)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
@@ -401,7 +401,6 @@ def insert_embedding(cur, article: ArticlePayload, chunk: str, embedding: np.nda
             np.asarray(embedding, dtype=float).tolist(),
         ),
     )
-
 
 @app.post("/webhook/news", response_model=WebhookResponse, status_code=201)
 def ingest_newshook(
@@ -433,7 +432,7 @@ def ingest_newshook(
             embeddings = embedder.encode(batch, normalize_embeddings=True)
             for chunk, emb in zip(batch, embeddings):
                 try:
-                    insert_embedding(cur, article, chunk, emb)
+                    insert_embedding(cur, article, chunk, emb, article.table)
                     inserted += 1
                 except Exception as exc:
                     raise HTTPException(
@@ -447,7 +446,6 @@ def ingest_newshook(
         article_id = "unknown"
     return WebhookResponse(article_id=article_id, chunks_inserted=inserted)
 
-
 # --- New endpoint: serve embeddings to Next.js backend ---
 class EmbeddingRequest(BaseModel):
     text: str
@@ -458,8 +456,7 @@ class EmbeddingResponse(BaseModel):
 
 
 @app.post("/api/embeddings", response_model=EmbeddingResponse)
-def get_embedding(req: EmbeddingRequest, x_signature: str = Header(...),
-    verified: bool = Depends(verify_signature)):
+def get_embedding(req: EmbeddingRequest):
     """Return normalized embedding vector for provided text.
 
     This endpoint is intended for the Next.js backend to request embeddings

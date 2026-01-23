@@ -10,6 +10,7 @@ Group=christianfita
 WorkingDirectory=/home/christianfita/apps/semantic-news-search
 EnvironmentFile=/home/christianfita/apps/semantic-news-search/.env
 Environment="PYTHONUNBUFFERED=1"
+Environment="TMPDIR=/home/christianfita/apps/semantic-news-search/tmp"
 ExecStart=/home/christianfita/apps/semantic-news-search/.venv/bin/uvicorn retrieval_api:app --host 0.0.0.0 --port 8080 --workers 2
 Restart=always
 RestartSec=5
