@@ -3,6 +3,8 @@
 .idea/
 __pycache__/
 .vscode/
-
+scripts/*
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
+models
+postgres_dsn_debug_explanation.md
