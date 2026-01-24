@@ -5,7 +5,7 @@ import inspect
 import json
 import os, time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from fastapi import Header, HTTPException, status, Request
 
 from fastapi import FastAPI, HTTPException, Query
@@ -188,7 +188,7 @@ class ArticlePayload(BaseModel):
     mongo_id: Optional[str] = Field(default=None, alias="_id")
     title: Optional[str] = None
     text: str
-    topic: Optional[str] = None
+    topic: Optional[Union[str, List[Dict[str, Any]]]] = None
     source: Optional[str] = None
     url: Optional[str] = None
     scraped_at: Optional[datetime] = None
@@ -197,6 +197,34 @@ class ArticlePayload(BaseModel):
     sentiment_score: Optional[float] = None
     data: Optional[Dict[str, Any]] = None
     table: str = "news_embeddings"
+
+    def _best_topic_label_from_list(self, items: List[Any]) -> Optional[str]:
+        """
+        Extract the topic label with the highest score from a list of topic dicts.
+        """
+        best_label: Optional[str] = None
+        best_score = float("-inf")
+        for entry in items:
+            if not isinstance(entry, dict):
+                continue
+            label = entry.get("label")
+            if not label:
+                continue
+            score = entry.get("score")
+            numeric_score: Optional[float]
+            if isinstance(score, (int, float)):
+                numeric_score = float(score)
+            else:
+                try:
+                    numeric_score = float(score)
+                except (TypeError, ValueError):
+                    numeric_score = 0.0
+            if numeric_score is None:
+                numeric_score = 0.0
+            if best_label is None or numeric_score > best_score:
+                best_score = numeric_score
+                best_label = label
+        return best_label
 
     def resolve_article_id(self) -> str:
         candidates = [
@@ -224,10 +252,20 @@ class ArticlePayload(BaseModel):
         return SentimentPayload(label=label, score=score)
 
     def resolve_topic(self) -> Optional[str]:
-        if self.topic:
+        if isinstance(self.topic, str):
             return self.topic
+        if isinstance(self.topic, list):
+            candidate = self._best_topic_label_from_list(self.topic)
+            if candidate:
+                return candidate
         if isinstance(self.data, dict):
-            return self.data.get("topic")
+            topic_field = self.data.get("topic")
+            if isinstance(topic_field, str):
+                return topic_field
+            if isinstance(topic_field, list):
+                candidate = self._best_topic_label_from_list(topic_field)
+                if candidate:
+                    return candidate
         return None
 
     def resolve_source(self) -> Optional[str]:
