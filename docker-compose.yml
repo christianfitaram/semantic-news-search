@@ -1,0 +1,18 @@
+services:
+  api:
+    build:
+      context: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      HF_LOCAL_MODELS_DIR: /app/models
+      HF_LOCAL_FILES_ONLY: "1"
+      BOOTSTRAP_MODELS: "1"
+    restart: unless-stopped
+    volumes:
+      - models-cache:/app/models
+
+volumes:
+  models-cache:
